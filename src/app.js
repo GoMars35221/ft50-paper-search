@@ -1,6 +1,6 @@
-import { FT50_JOURNALS, FT50_SOURCE, JOURNAL_GROUPS, journalsForSearch } from "./ft50.js";
-import { buildWorksUrl, normalizeWork, resolveJournalSourceId } from "./openalex.js";
-import { expandSearchTerms, keywordIdsForQuery, sortWorksForQuery } from "./search.js";
+import { FT50_JOURNALS, FT50_SOURCE, JOURNAL_GROUPS, journalsForSearch } from "./ft50.js?v=20260815-newest-first";
+import { buildWorksUrl, normalizeWork, resolveJournalSourceId } from "./openalex.js?v=20260815-newest-first";
+import { expandSearchTerms, keywordIdsForQuery, sortWorksForQuery } from "./search.js?v=20260815-newest-first";
 
 const SOURCE_CACHE_KEY = "ft50-openalex-source-map-v2";
 const SOURCE_CONCURRENCY = 4;
@@ -217,10 +217,11 @@ async function runSearch() {
     const displayWorks = useRankedCandidatePool
       ? rankedWorks.filter((work) => work.rankScore >= MIN_SMART_RELEVANCE_SCORE)
       : rankedWorks;
+    const orderedWorks = useRankedCandidatePool ? orderByPublicationDateDesc(displayWorks) : displayWorks;
     state.total = useRankedCandidatePool ? displayWorks.length : estimateTotal(datasets, rawWorks.length);
     state.results = useRankedCandidatePool
-      ? displayWorks.slice((state.page - 1) * params.perPage, state.page * params.perPage)
-      : displayWorks.slice(0, params.perPage);
+      ? orderedWorks.slice((state.page - 1) * params.perPage, state.page * params.perPage)
+      : orderedWorks.slice(0, params.perPage);
 
     renderResults(state.results);
     renderPagination();
@@ -445,6 +446,15 @@ function shouldUseRankedCandidatePool(params) {
   return Boolean(params.query && params.sort === "relevance");
 }
 
+function orderByPublicationDateDesc(works) {
+  return [...works].sort(
+    (a, b) =>
+      dateValue(b.publicationDate, b.year) - dateValue(a.publicationDate, a.year) ||
+      (b.rankScore || 0) - (a.rankScore || 0) ||
+      b.citedByCount - a.citedByCount
+  );
+}
+
 async function fetchWorks(url) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -469,6 +479,10 @@ function dedupeWorks(works) {
 function estimateTotal(datasets, fallback) {
   const total = datasets.reduce((sum, data) => sum + (data.meta?.count || 0), 0);
   return Math.max(total, fallback);
+}
+
+function dateValue(publicationDate, year) {
+  return Date.parse(publicationDate || `${year || 0}-01-01`) || 0;
 }
 
 function setLoading(isLoading) {

@@ -1,4 +1,4 @@
-import { buildSearchExpression } from "./search.js";
+import { buildSearchExpression } from "./search.js?v=20260815-newest-first";
 
 const OPENALEX_BASE_URL = "https://api.openalex.org";
 
