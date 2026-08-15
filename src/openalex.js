@@ -1,3 +1,5 @@
+import { buildSearchExpression } from "./search.js";
+
 const OPENALEX_BASE_URL = "https://api.openalex.org";
 
 const WORK_SELECT_FIELDS = [
@@ -12,8 +14,10 @@ const WORK_SELECT_FIELDS = [
   "primary_location",
   "open_access",
   "abstract_inverted_index",
+  "keywords",
   "topics",
   "concepts",
+  "relevance_score",
   "type"
 ];
 
@@ -98,7 +102,8 @@ export function buildWorksUrl({
   page = 1,
   perPage = 25,
   mailto = "",
-  articleOnly = true
+  articleOnly = true,
+  keywordIds = []
 }) {
   const url = new URL(`${OPENALEX_BASE_URL}/works`);
   const filters = [];
@@ -115,12 +120,16 @@ export function buildWorksUrl({
     filters.push("type:types/article");
   }
 
+  if (keywordIds.length) {
+    filters.push(`keywords.id:${keywordIds.map(normalizeKeywordId).join("|")}`);
+  }
+
   if (filters.length) {
     url.searchParams.set("filter", filters.join(","));
   }
 
   if (query.trim()) {
-    url.searchParams.set("search", query.trim());
+    url.searchParams.set("search", buildSearchExpression(query));
   }
 
   if (sort === "latest" || (sort === "relevance" && !query.trim())) {
@@ -165,6 +174,10 @@ export function normalizeWork(work) {
     .map((topic) => topic.display_name)
     .filter(Boolean)
     .slice(0, 4);
+  const keywords = (work.keywords || [])
+    .map((keyword) => keyword.display_name)
+    .filter(Boolean)
+    .slice(0, 5);
   const doi = work.doi ? work.doi.replace("https://doi.org/", "") : "";
   const landingUrl = primaryLocation.landing_page_url || work.doi || work.id;
   const pdfUrl = primaryLocation.pdf_url || "";
@@ -185,10 +198,19 @@ export function normalizeWork(work) {
     oaUrl,
     isOpenAccess: Boolean(work.open_access?.is_oa),
     abstract: abstractFromInvertedIndex(work.abstract_inverted_index),
+    keywords,
+    relevanceScore: Number(work.relevance_score || 0),
     topics
   };
 }
 
 function normalizeIssn(issn) {
   return String(issn || "").replace(/[^0-9X]/gi, "").toUpperCase();
+}
+
+function normalizeKeywordId(keywordId) {
+  return String(keywordId || "")
+    .replace("https://openalex.org/keywords/", "")
+    .replace(/^keywords\//, "")
+    .trim();
 }

@@ -8,6 +8,12 @@ import {
   normalizeWork,
   pickBestSource
 } from "../src/openalex.js";
+import {
+  buildSearchExpression,
+  expandSearchTerms,
+  keywordIdsForQuery,
+  sortWorksForQuery
+} from "../src/search.js";
 
 test("current FT50 list has exactly 50 journals", () => {
   assert.equal(journalsForSearch().length, 50);
@@ -109,6 +115,40 @@ test("works URL scopes searches to OpenAlex source IDs and publication years", (
   assert.equal(url.searchParams.get("mailto"), "researcher@example.edu");
 });
 
+test("search expansion maps IRO to investor relations variants", () => {
+  const terms = expandSearchTerms("IRO");
+  const expression = buildSearchExpression("IRO");
+
+  assert.ok(terms.includes("investor relations"));
+  assert.ok(terms.includes("investor relations officer"));
+  assert.ok(expression.includes(" OR "));
+  assert.ok(expression.includes('"investor relations"'));
+  assert.ok(keywordIdsForQuery("investor relation").includes("investor-relations"));
+});
+
+test("works URL sends expanded search expressions and keyword filters", () => {
+  const expandedUrl = new URL(
+    buildWorksUrl({
+      query: "IRO",
+      sourceIds: ["S160506855"],
+      yearFrom: 2019,
+      yearTo: 2025,
+      sort: "relevance"
+    })
+  );
+  const keywordUrl = new URL(
+    buildWorksUrl({
+      sourceIds: ["S160506855"],
+      keywordIds: ["investor-relations"],
+      yearFrom: 2019,
+      yearTo: 2025
+    })
+  );
+
+  assert.ok(expandedUrl.searchParams.get("search").includes('"investor relations"'));
+  assert.ok(keywordUrl.searchParams.get("filter").includes("keywords.id:investor-relations"));
+});
+
 test("relevance sort falls back to latest when no query is supplied", () => {
   const url = new URL(
     buildWorksUrl({
@@ -195,6 +235,8 @@ test("work normalization extracts authors, source, DOI, and abstract", () => {
       Good: [0],
       metadata: [1]
     },
+    keywords: [{ display_name: "Investor Relations" }],
+    relevance_score: 4.25,
     topics: [{ display_name: "Innovation" }]
   });
 
@@ -205,5 +247,35 @@ test("work normalization extracts authors, source, DOI, and abstract", () => {
   assert.equal(result.pdfUrl, "https://example.com/paper.pdf");
   assert.equal(result.oaUrl, "https://example.com/oa");
   assert.deepEqual(result.authors, ["Ada Lovelace", "Grace Hopper"]);
+  assert.deepEqual(result.keywords, ["Investor Relations"]);
+  assert.equal(result.relevanceScore, 4.25);
   assert.deepEqual(result.topics, ["Innovation"]);
+});
+
+test("smart relevance ranks title, abstract, keyword, and topic matches above unrelated papers", () => {
+  const ranked = sortWorksForQuery(
+    [
+      {
+        title: "A Highly Cited Unrelated Paper",
+        keywords: [],
+        topics: ["Asset Pricing"],
+        abstract: "This paper studies portfolio choice.",
+        publicationDate: "2025-01-01",
+        citedByCount: 500
+      },
+      {
+        title: "Investor Relations and Corporate Disclosure",
+        keywords: ["Investor Relations"],
+        topics: ["Corporate Disclosure"],
+        abstract: "The investor relations officer communicates with investors.",
+        publicationDate: "2021-01-01",
+        citedByCount: 5
+      }
+    ],
+    "IRO",
+    "relevance"
+  );
+
+  assert.equal(ranked[0].title, "Investor Relations and Corporate Disclosure");
+  assert.ok(ranked[0].matchScore > ranked[1].matchScore);
 });

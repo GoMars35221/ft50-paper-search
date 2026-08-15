@@ -1,5 +1,6 @@
 import { FT50_JOURNALS, FT50_SOURCE, JOURNAL_GROUPS, journalsForSearch } from "./ft50.js";
 import { buildWorksUrl, normalizeWork, resolveJournalSourceId } from "./openalex.js";
+import { expandSearchTerms, keywordIdsForQuery, sortWorksForQuery } from "./search.js";
 
 const SOURCE_CACHE_KEY = "ft50-openalex-source-map-v2";
 const SOURCE_CONCURRENCY = 4;
@@ -168,33 +169,51 @@ async function runSearch() {
 
     state.lastResolvedJournals = resolvedJournals;
     renderActiveFilters(params, resolvedJournals, skipped);
-    setStatus("Searching OpenAlex...");
+    setStatus("Searching OpenAlex title, abstract, full text, and keyword tags...");
 
-    const url = buildWorksUrl({
-      query: params.query,
-      sourceIds,
-      yearFrom: params.yearFrom,
-      yearTo: params.yearTo,
-      sort: params.sort,
-      page: state.page,
-      perPage: params.perPage,
-      mailto: params.mailto,
-      articleOnly: true
-    });
+    const requests = [
+      buildWorksUrl({
+        query: params.query,
+        sourceIds,
+        yearFrom: params.yearFrom,
+        yearTo: params.yearTo,
+        sort: params.sort,
+        page: state.page,
+        perPage: params.perPage,
+        mailto: params.mailto,
+        articleOnly: true
+      })
+    ];
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`OpenAlex returned HTTP ${response.status}.`);
+    const keywordIds = keywordIdsForQuery(params.query);
+    if (keywordIds.length) {
+      requests.push(
+        buildWorksUrl({
+          query: "",
+          sourceIds,
+          yearFrom: params.yearFrom,
+          yearTo: params.yearTo,
+          sort: params.sort,
+          page: state.page,
+          perPage: params.perPage,
+          mailto: params.mailto,
+          articleOnly: true,
+          keywordIds
+        })
+      );
     }
 
-    const data = await response.json();
-    state.total = data.meta?.count || 0;
-    state.results = (data.results || []).map(normalizeWork);
+    const datasets = await Promise.all(requests.map(fetchWorks));
+    const rawWorks = dedupeWorks(datasets.flatMap((data) => data.results || []));
+    state.total = estimateTotal(datasets, rawWorks.length);
+    state.results = sortWorksForQuery(rawWorks.map(normalizeWork), params.query, params.sort).slice(0, params.perPage);
 
     renderResults(state.results);
     renderPagination();
     setStatus(statusMessage(state.results.length, skipped), state.results.length ? "success" : "empty");
-    elements.resultCount.textContent = `${state.total.toLocaleString()} results`;
+    elements.resultCount.textContent = `${state.total.toLocaleString()} ${
+      requests.length > 1 ? "candidate records" : "results"
+    }`;
   } catch (error) {
     state.results = [];
     state.total = 0;
@@ -291,12 +310,17 @@ async function ensureSourceIds(journals) {
 function renderActiveFilters(params, journals, skipped) {
   const chips = [
     `${params.yearFrom}-${params.yearTo}`,
-    params.sort === "latest" ? "Latest first" : params.sort === "citations" ? "Most cited" : "Relevance",
+    params.sort === "latest" ? "Latest first" : params.sort === "citations" ? "Most cited" : "Smart relevance",
     params.discipline,
     journals.length === 1 ? journals[0].name : `${journals.length} journals`
   ];
 
+  const expandedTerms = expandSearchTerms(params.query);
+  const keywordIds = keywordIdsForQuery(params.query);
+
   if (params.query) chips.unshift(params.query);
+  if (expandedTerms.length > 1) chips.push(`${expandedTerms.length} search variants`);
+  if (keywordIds.length) chips.push("Keyword tags included");
   if (params.includeHistorical) chips.push("Historical FT50 included");
   if (skipped) chips.push(`${skipped} unresolved sources skipped`);
 
@@ -334,12 +358,14 @@ function renderResult(result) {
 
   const meta = document.createElement("div");
   meta.className = "result-meta";
-  meta.append(
+  const metaPills = [
     pill(result.journal),
     pill(result.publicationDate || result.year || "Date unavailable"),
     pill(`${result.citedByCount.toLocaleString()} citations`),
+    result.matchScore ? pill(`Match ${result.matchScore}`) : null,
     pill(result.isOpenAccess ? "Open access" : "Closed")
-  );
+  ];
+  meta.append(...metaPills.filter(Boolean));
 
   const title = document.createElement("h2");
   title.textContent = result.title;
@@ -354,7 +380,8 @@ function renderResult(result) {
 
   const topics = document.createElement("div");
   topics.className = "topics";
-  topics.replaceChildren(...result.topics.map(pill));
+  const tagValues = unique([...(result.keywords || []), ...(result.topics || [])].filter(Boolean)).slice(0, 6);
+  topics.replaceChildren(...tagValues.map(pill));
 
   const actions = document.createElement("div");
   actions.className = "result-actions";
@@ -373,7 +400,7 @@ function renderResult(result) {
   }
 
   article.append(meta, title, authors, abstract);
-  if (result.topics.length) article.append(topics);
+  if (tagValues.length) article.append(topics);
   article.append(actions);
   return article;
 }
@@ -384,6 +411,32 @@ function renderPagination() {
   elements.prevPage.disabled = state.page <= 1;
   elements.nextPage.disabled = state.page >= maxPage || state.total === 0;
   elements.pageLabel.textContent = `Page ${state.page} of ${maxPage}`;
+}
+
+async function fetchWorks(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`OpenAlex returned HTTP ${response.status}.`);
+  }
+  return response.json();
+}
+
+function dedupeWorks(works) {
+  const seen = new Map();
+
+  for (const work of works) {
+    const key = work.id || work.doi || work.display_name;
+    if (key && !seen.has(key)) {
+      seen.set(key, work);
+    }
+  }
+
+  return [...seen.values()];
+}
+
+function estimateTotal(datasets, fallback) {
+  const total = datasets.reduce((sum, data) => sum + (data.meta?.count || 0), 0);
+  return Math.max(total, fallback);
 }
 
 function setLoading(isLoading) {
@@ -468,13 +521,26 @@ async function mapLimit(items, limit, mapper) {
 }
 
 function toCsv(results) {
-  const header = ["title", "authors", "year", "publication_date", "journal", "citations", "doi", "url", "oa_url", "abstract"];
+  const header = [
+    "title",
+    "authors",
+    "year",
+    "publication_date",
+    "journal",
+    "keywords",
+    "citations",
+    "doi",
+    "url",
+    "oa_url",
+    "abstract"
+  ];
   const rows = results.map((result) => [
     result.title,
     result.authors.join("; "),
     result.year,
     result.publicationDate,
     result.journal,
+    (result.keywords || []).join("; "),
     result.citedByCount,
     result.doi,
     result.landingUrl,
@@ -491,6 +557,7 @@ function toRis(results) {
       for (const author of result.authors) lines.push(`AU  - ${author}`);
       if (result.year) lines.push(`PY  - ${result.year}`);
       if (result.journal) lines.push(`JO  - ${result.journal}`);
+      for (const keyword of result.keywords || []) lines.push(`KW  - ${keyword}`);
       if (result.doi) lines.push(`DO  - ${result.doi}`);
       if (result.landingUrl) lines.push(`UR  - ${result.landingUrl}`);
       if (result.oaUrl && result.oaUrl !== result.landingUrl) lines.push(`L2  - ${result.oaUrl}`);
