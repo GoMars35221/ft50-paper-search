@@ -1,4 +1,4 @@
-import { buildSearchExpression } from "./search.js?v=20260815-rate-limit";
+import { buildSearchExpression } from "./search.js?v=20260815-api-key-input";
 
 const OPENALEX_BASE_URL = "https://api.openalex.org";
 

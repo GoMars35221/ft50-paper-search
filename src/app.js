@@ -1,6 +1,6 @@
-import { FT50_JOURNALS, FT50_SOURCE, JOURNAL_GROUPS, journalsForSearch } from "./ft50.js?v=20260815-rate-limit";
-import { buildWorksUrl, normalizeWork, resolveJournalSourceId } from "./openalex.js?v=20260815-rate-limit";
-import { expandSearchTerms, keywordIdsForQuery, sortWorksForQuery } from "./search.js?v=20260815-rate-limit";
+import { FT50_JOURNALS, FT50_SOURCE, JOURNAL_GROUPS, journalsForSearch } from "./ft50.js?v=20260815-api-key-input";
+import { buildWorksUrl, normalizeWork, resolveJournalSourceId } from "./openalex.js?v=20260815-api-key-input";
+import { expandSearchTerms, keywordIdsForQuery, sortWorksForQuery } from "./search.js?v=20260815-api-key-input";
 
 const SOURCE_CACHE_KEY = "ft50-openalex-source-map-v2";
 const SOURCE_CONCURRENCY = 2;
@@ -49,7 +49,7 @@ function initialize() {
   populateJournalSelect();
   renderJournalSet();
   bindEvents();
-  runSearch();
+  renderInitialState();
 }
 
 function bindEvents() {
@@ -377,6 +377,16 @@ function renderResults(results) {
   updateExportButtons();
 }
 
+function renderInitialState() {
+  state.results = [];
+  state.total = 0;
+  elements.results.replaceChildren();
+  renderPagination();
+  updateExportButtons();
+  setStatus("Enter keywords, optionally paste an OpenAlex API key, then click Search.");
+  elements.resultCount.textContent = "Ready";
+}
+
 function renderResult(result) {
   const article = document.createElement("article");
   article.className = "result-card";
@@ -537,7 +547,7 @@ function delay(ms) {
 
 function setLoading(isLoading) {
   elements.form.querySelectorAll("button, input, select").forEach((control) => {
-    if (control.id !== "exportCsv" && control.id !== "exportRis") {
+    if (control.id !== "apiKey") {
       control.disabled = isLoading;
     }
   });
