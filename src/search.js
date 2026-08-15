@@ -101,12 +101,13 @@ export function scoreWorkForQuery(work, query) {
   for (const field of fields) {
     const text = normalizeSearchText(field.value);
     if (!text) continue;
+    const textTokens = text.split(" ").filter(Boolean);
 
     for (const term of terms) {
       const tokens = term.split(" ").filter(Boolean);
-      if (text.includes(term)) {
+      if (containsTerm(text, textTokens, term)) {
         score += field.weight + Math.min(10, term.length / 3);
-      } else if (tokens.length > 1 && tokens.every((token) => text.includes(token))) {
+      } else if (tokens.length > 1 && tokens.every((token) => textTokens.includes(token))) {
         score += field.weight * 0.45;
       }
     }
@@ -134,7 +135,7 @@ export function sortWorksForQuery(works, query, sort = "relevance") {
     return scored.sort(compareByDateThenScore);
   }
 
-  return scored.sort(compareByScoreThenDate);
+  return scored.sort(compareByDateThenScore);
 }
 
 function formatSearchTerm(term) {
@@ -159,12 +160,9 @@ function keywordSlug(value) {
     .join("-");
 }
 
-function compareByScoreThenDate(a, b) {
-  return (
-    scoreValue(b) - scoreValue(a) ||
-    dateValue(b.publicationDate, b.year) - dateValue(a.publicationDate, a.year) ||
-    b.citedByCount - a.citedByCount
-  );
+function containsTerm(text, textTokens, term) {
+  if (!term.includes(" ")) return textTokens.includes(term);
+  return ` ${text} `.includes(` ${term} `);
 }
 
 function compareByDateThenScore(a, b) {

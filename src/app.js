@@ -5,6 +5,7 @@ import { expandSearchTerms, keywordIdsForQuery, sortWorksForQuery } from "./sear
 const SOURCE_CACHE_KEY = "ft50-openalex-source-map-v2";
 const SOURCE_CONCURRENCY = 4;
 const SMART_RELEVANCE_CANDIDATE_LIMIT = 100;
+const MIN_SMART_RELEVANCE_SCORE = 11;
 
 const elements = {
   form: document.querySelector("#searchForm"),
@@ -213,10 +214,13 @@ async function runSearch() {
     const datasets = await Promise.all(requests.map(fetchWorks));
     const rawWorks = dedupeWorks(datasets.flatMap((data) => data.results || []));
     const rankedWorks = sortWorksForQuery(rawWorks.map(normalizeWork), params.query, params.sort);
-    state.total = useRankedCandidatePool ? rankedWorks.length : estimateTotal(datasets, rawWorks.length);
+    const displayWorks = useRankedCandidatePool
+      ? rankedWorks.filter((work) => work.rankScore >= MIN_SMART_RELEVANCE_SCORE)
+      : rankedWorks;
+    state.total = useRankedCandidatePool ? displayWorks.length : estimateTotal(datasets, rawWorks.length);
     state.results = useRankedCandidatePool
-      ? rankedWorks.slice((state.page - 1) * params.perPage, state.page * params.perPage)
-      : rankedWorks.slice(0, params.perPage);
+      ? displayWorks.slice((state.page - 1) * params.perPage, state.page * params.perPage)
+      : displayWorks.slice(0, params.perPage);
 
     renderResults(state.results);
     renderPagination();
@@ -323,7 +327,11 @@ async function ensureSourceIds(journals) {
 function renderActiveFilters(params, journals, skipped) {
   const chips = [
     `${params.yearFrom}-${params.yearTo}`,
-    params.sort === "latest" ? "Latest first" : params.sort === "citations" ? "Most cited" : "Smart relevance",
+    params.sort === "latest"
+      ? "Latest first"
+      : params.sort === "citations"
+        ? "Most cited"
+        : "Smart relevance, newest first",
     params.discipline,
     journals.length === 1 ? journals[0].name : `${journals.length} journals`
   ];

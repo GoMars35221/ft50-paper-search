@@ -12,6 +12,7 @@ import {
   buildSearchExpression,
   expandSearchTerms,
   keywordIdsForQuery,
+  scoreWorkForQuery,
   sortWorksForQuery
 } from "../src/search.js";
 
@@ -252,7 +253,7 @@ test("work normalization extracts authors, source, DOI, and abstract", () => {
   assert.deepEqual(result.topics, ["Innovation"]);
 });
 
-test("smart relevance ranks title, abstract, keyword, and topic matches above unrelated papers", () => {
+test("smart relevance scores matches while preserving publication-date order", () => {
   const ranked = sortWorksForQuery(
     [
       {
@@ -276,11 +277,26 @@ test("smart relevance ranks title, abstract, keyword, and topic matches above un
     "relevance"
   );
 
-  assert.equal(ranked[0].title, "Investor Relations and Corporate Disclosure");
-  assert.ok(ranked[0].matchScore > ranked[1].matchScore);
+  assert.equal(ranked[0].title, "A Highly Cited Unrelated Paper");
+  assert.ok(ranked[1].matchScore > ranked[0].matchScore);
 });
 
-test("smart relevance uses the raw rank score before applying the display cap", () => {
+test("short acronym matching does not score substrings inside unrelated words", () => {
+  const score = scoreWorkForQuery(
+    {
+      title: "EPA scrutiny and voluntary environmental disclosures",
+      keywords: ["Environmental disclosure"],
+      topics: ["Corporate disclosure"],
+      abstract: "The paper studies environmental reporting.",
+      publicationDate: "2025-01-01"
+    },
+    "IRO"
+  );
+
+  assert.equal(score, 0);
+});
+
+test("latest and smart relevance use raw rank score as a publication-date tie-breaker", () => {
   const ranked = sortWorksForQuery(
     [
       {
@@ -288,7 +304,7 @@ test("smart relevance uses the raw rank score before applying the display cap", 
         keywords: [],
         topics: [],
         abstract: "",
-        publicationDate: "2025-01-01",
+        publicationDate: "2018-07-01",
         citedByCount: 1
       },
       {
