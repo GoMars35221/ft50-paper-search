@@ -279,3 +279,32 @@ test("smart relevance ranks title, abstract, keyword, and topic matches above un
   assert.equal(ranked[0].title, "Investor Relations and Corporate Disclosure");
   assert.ok(ranked[0].matchScore > ranked[1].matchScore);
 });
+
+test("smart relevance uses the raw rank score before applying the display cap", () => {
+  const ranked = sortWorksForQuery(
+    [
+      {
+        title: "Investor Relations",
+        keywords: [],
+        topics: [],
+        abstract: "",
+        publicationDate: "2025-01-01",
+        citedByCount: 1
+      },
+      {
+        title: "Investor Relations and Information Assimilation",
+        keywords: ["Investor relations", "Officer"],
+        topics: ["Auditing, Earnings Management, Governance"],
+        abstract: "Investor relations officers facilitate information assimilation by the market.",
+        publicationDate: "2018-07-01",
+        citedByCount: 280
+      }
+    ],
+    "IRO",
+    "relevance"
+  );
+
+  assert.equal(ranked[0].title, "Investor Relations and Information Assimilation");
+  assert.ok(ranked[0].rankScore > ranked[0].matchScore);
+  assert.equal(ranked[0].matchScore, 100);
+});

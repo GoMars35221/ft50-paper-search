@@ -112,15 +112,19 @@ export function scoreWorkForQuery(work, query) {
     }
   }
 
-  return Math.min(100, Math.round(score));
+  return Math.max(0, Math.round(score));
 }
 
 export function sortWorksForQuery(works, query, sort = "relevance") {
   const hasQuery = Boolean(collapseSpaces(query));
-  const scored = works.map((work) => ({
-    ...work,
-    matchScore: hasQuery ? scoreWorkForQuery(work, query) : 0
-  }));
+  const scored = works.map((work) => {
+    const rankScore = hasQuery ? scoreWorkForQuery(work, query) : 0;
+    return {
+      ...work,
+      rankScore,
+      matchScore: hasQuery ? Math.min(100, rankScore) : 0
+    };
+  });
 
   if (sort === "citations") {
     return scored.sort(compareByCitationsThenScore);
@@ -157,7 +161,7 @@ function keywordSlug(value) {
 
 function compareByScoreThenDate(a, b) {
   return (
-    b.matchScore - a.matchScore ||
+    scoreValue(b) - scoreValue(a) ||
     dateValue(b.publicationDate, b.year) - dateValue(a.publicationDate, a.year) ||
     b.citedByCount - a.citedByCount
   );
@@ -166,7 +170,7 @@ function compareByScoreThenDate(a, b) {
 function compareByDateThenScore(a, b) {
   return (
     dateValue(b.publicationDate, b.year) - dateValue(a.publicationDate, a.year) ||
-    b.matchScore - a.matchScore ||
+    scoreValue(b) - scoreValue(a) ||
     b.citedByCount - a.citedByCount
   );
 }
@@ -174,9 +178,13 @@ function compareByDateThenScore(a, b) {
 function compareByCitationsThenScore(a, b) {
   return (
     b.citedByCount - a.citedByCount ||
-    b.matchScore - a.matchScore ||
+    scoreValue(b) - scoreValue(a) ||
     dateValue(b.publicationDate, b.year) - dateValue(a.publicationDate, a.year)
   );
+}
+
+function scoreValue(work) {
+  return Number(work.rankScore ?? work.matchScore ?? 0);
 }
 
 function dateValue(publicationDate, year) {

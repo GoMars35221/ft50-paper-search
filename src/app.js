@@ -4,6 +4,7 @@ import { expandSearchTerms, keywordIdsForQuery, sortWorksForQuery } from "./sear
 
 const SOURCE_CACHE_KEY = "ft50-openalex-source-map-v2";
 const SOURCE_CONCURRENCY = 4;
+const SMART_RELEVANCE_CANDIDATE_LIMIT = 100;
 
 const elements = {
   form: document.querySelector("#searchForm"),
@@ -170,16 +171,22 @@ async function runSearch() {
     state.lastResolvedJournals = resolvedJournals;
     renderActiveFilters(params, resolvedJournals, skipped);
     setStatus("Searching OpenAlex title, abstract, full text, and keyword tags...");
+    const apiYearFrom = openAlexYearFrom(params);
+    const useRankedCandidatePool = shouldUseRankedCandidatePool(params);
+    const requestPage = useRankedCandidatePool ? 1 : state.page;
+    const requestPerPage = useRankedCandidatePool
+      ? Math.max(params.perPage, SMART_RELEVANCE_CANDIDATE_LIMIT)
+      : params.perPage;
 
     const requests = [
       buildWorksUrl({
         query: params.query,
         sourceIds,
-        yearFrom: params.yearFrom,
+        yearFrom: apiYearFrom,
         yearTo: params.yearTo,
         sort: params.sort,
-        page: state.page,
-        perPage: params.perPage,
+        page: requestPage,
+        perPage: requestPerPage,
         mailto: params.mailto,
         articleOnly: true
       })
@@ -191,11 +198,11 @@ async function runSearch() {
         buildWorksUrl({
           query: "",
           sourceIds,
-          yearFrom: params.yearFrom,
+          yearFrom: apiYearFrom,
           yearTo: params.yearTo,
           sort: params.sort,
-          page: state.page,
-          perPage: params.perPage,
+          page: requestPage,
+          perPage: requestPerPage,
           mailto: params.mailto,
           articleOnly: true,
           keywordIds
@@ -205,15 +212,21 @@ async function runSearch() {
 
     const datasets = await Promise.all(requests.map(fetchWorks));
     const rawWorks = dedupeWorks(datasets.flatMap((data) => data.results || []));
-    state.total = estimateTotal(datasets, rawWorks.length);
-    state.results = sortWorksForQuery(rawWorks.map(normalizeWork), params.query, params.sort).slice(0, params.perPage);
+    const rankedWorks = sortWorksForQuery(rawWorks.map(normalizeWork), params.query, params.sort);
+    state.total = useRankedCandidatePool ? rankedWorks.length : estimateTotal(datasets, rawWorks.length);
+    state.results = useRankedCandidatePool
+      ? rankedWorks.slice((state.page - 1) * params.perPage, state.page * params.perPage)
+      : rankedWorks.slice(0, params.perPage);
 
     renderResults(state.results);
     renderPagination();
     setStatus(statusMessage(state.results.length, skipped), state.results.length ? "success" : "empty");
-    elements.resultCount.textContent = `${state.total.toLocaleString()} ${
-      requests.length > 1 ? "candidate records" : "results"
-    }`;
+    const resultLabel = useRankedCandidatePool
+      ? "ranked candidates"
+      : requests.length > 1
+        ? "candidate records"
+        : "results";
+    elements.resultCount.textContent = `${state.total.toLocaleString()} ${resultLabel}`;
   } catch (error) {
     state.results = [];
     state.total = 0;
@@ -317,8 +330,10 @@ function renderActiveFilters(params, journals, skipped) {
 
   const expandedTerms = expandSearchTerms(params.query);
   const keywordIds = keywordIdsForQuery(params.query);
+  const apiYearFrom = openAlexYearFrom(params);
 
   if (params.query) chips.unshift(params.query);
+  if (apiYearFrom < params.yearFrom) chips.push(`${apiYearFrom} online-first buffer`);
   if (expandedTerms.length > 1) chips.push(`${expandedTerms.length} search variants`);
   if (keywordIds.length) chips.push("Keyword tags included");
   if (params.includeHistorical) chips.push("Historical FT50 included");
@@ -411,6 +426,15 @@ function renderPagination() {
   elements.prevPage.disabled = state.page <= 1;
   elements.nextPage.disabled = state.page >= maxPage || state.total === 0;
   elements.pageLabel.textContent = `Page ${state.page} of ${maxPage}`;
+}
+
+function openAlexYearFrom(params) {
+  if (!params.query || params.yearFrom <= 1900) return params.yearFrom;
+  return params.yearFrom - 1;
+}
+
+function shouldUseRankedCandidatePool(params) {
+  return Boolean(params.query && params.sort === "relevance");
 }
 
 async function fetchWorks(url) {
