@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FT50 Paper Search</title>
+    <link rel="stylesheet" href="src/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
+          <rect x="10" y="12" width="34" height="42" rx="4"></rect>
+          <rect x="20" y="8" width="34" height="42" rx="4"></rect>
+          <path d="M27 20h18M27 29h18M27 38h12"></path>
+          <circle cx="15" cy="49" r="3"></circle>
+          <circle cx="49" cy="14" r="3"></circle>
+        </svg>
+        <div>
+          <h1>FT50 Paper Search</h1>
+          <p>Financial Times journal set, OpenAlex metadata</p>
+        </div>
+      </div>
+      <div class="header-metrics" aria-label="Source status">
+        <span id="sourceCoverage">FT50 sources ready</span>
+        <span id="resultCount">No search yet</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="search-band" aria-labelledby="searchTitle">
+        <form id="searchForm" class="search-form">
+          <div class="query-row">
+            <label for="query" id="searchTitle">Keywords or topic</label>
+            <div class="query-control">
+              <input id="query" name="query" type="search" autocomplete="off" placeholder="AI adoption, ESG disclosure, supply chain resilience">
+              <button class="primary-button" type="submit">Search</button>
+            </div>
+          </div>
+
+          <div class="filters-grid">
+            <label>
+              From
+              <input id="yearFrom" name="yearFrom" type="number" min="1900" max="2035" value="2019">
+            </label>
+            <label>
+              To
+              <input id="yearTo" name="yearTo" type="number" min="1900" max="2035" value="2025">
+            </label>
+            <label>
+              Discipline
+              <select id="discipline" name="discipline"></select>
+            </label>
+            <label>
+              Journal
+              <select id="journal" name="journal"></select>
+            </label>
+            <label>
+              Sort
+              <select id="sort" name="sort">
+                <option value="latest" selected>Latest first</option>
+                <option value="relevance">Relevance</option>
+                <option value="citations">Most cited</option>
+              </select>
+            </label>
+            <label>
+              Per page
+              <select id="perPage" name="perPage">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="option-row">
+            <label class="checkbox-label">
+              <input id="includeHistorical" type="checkbox">
+              Include 2016 FT50 journals removed in 2026
+            </label>
+            <label class="email-label">
+              OpenAlex email
+              <input id="mailto" name="mailto" type="email" autocomplete="email" placeholder="optional">
+            </label>
+          </div>
+        </form>
+      </section>
+
+      <aside class="side-panel" aria-label="Search tools">
+        <div class="panel-block">
+          <h2>Journal Set</h2>
+          <div id="journalSet" class="journal-set"></div>
+        </div>
+        <div class="panel-block">
+          <h2>Export</h2>
+          <div class="button-row">
+            <button id="exportCsv" type="button" disabled>CSV</button>
+            <button id="exportRis" type="button" disabled>RIS</button>
+          </div>
+        </div>
+        <div class="panel-block source-block">
+          <h2>Source</h2>
+          <p>FT50 list effective April 29, 2026. Results are live OpenAlex records.</p>
+        </div>
+      </aside>
+
+      <section class="results-panel" aria-live="polite">
+        <div id="status" class="status-line">Loading the default FT50 search...</div>
+        <div id="activeFilters" class="active-filters" aria-label="Active filters"></div>
+        <div id="results" class="results-list"></div>
+        <nav class="pagination" aria-label="Result pages">
+          <button id="prevPage" type="button" disabled>Previous</button>
+          <span id="pageLabel">Page 1</span>
+          <button id="nextPage" type="button" disabled>Next</button>
+        </nav>
+      </section>
+    </main>
+
+    <noscript>This app needs JavaScript to query OpenAlex.</noscript>
+    <script type="module" src="src/app.js"></script>
+  </body>
+</html>
