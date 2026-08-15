@@ -1,11 +1,14 @@
-import { FT50_JOURNALS, FT50_SOURCE, JOURNAL_GROUPS, journalsForSearch } from "./ft50.js?v=20260815-newest-first";
-import { buildWorksUrl, normalizeWork, resolveJournalSourceId } from "./openalex.js?v=20260815-newest-first";
-import { expandSearchTerms, keywordIdsForQuery, sortWorksForQuery } from "./search.js?v=20260815-newest-first";
+import { FT50_JOURNALS, FT50_SOURCE, JOURNAL_GROUPS, journalsForSearch } from "./ft50.js?v=20260815-rate-limit";
+import { buildWorksUrl, normalizeWork, resolveJournalSourceId } from "./openalex.js?v=20260815-rate-limit";
+import { expandSearchTerms, keywordIdsForQuery, sortWorksForQuery } from "./search.js?v=20260815-rate-limit";
 
 const SOURCE_CACHE_KEY = "ft50-openalex-source-map-v2";
-const SOURCE_CONCURRENCY = 4;
+const SOURCE_CONCURRENCY = 2;
 const SMART_RELEVANCE_CANDIDATE_LIMIT = 100;
 const MIN_SMART_RELEVANCE_SCORE = 11;
+const WORKS_CACHE_TTL_MS = 5 * 60 * 1000;
+const OPENALEX_RETRY_DELAYS_MS = [1200, 2500, 5000];
+const worksCache = new Map();
 
 const elements = {
   form: document.querySelector("#searchForm"),
@@ -17,7 +20,7 @@ const elements = {
   sort: document.querySelector("#sort"),
   perPage: document.querySelector("#perPage"),
   includeHistorical: document.querySelector("#includeHistorical"),
-  mailto: document.querySelector("#mailto"),
+  apiKey: document.querySelector("#apiKey"),
   sourceCoverage: document.querySelector("#sourceCoverage"),
   resultCount: document.querySelector("#resultCount"),
   journalSet: document.querySelector("#journalSet"),
@@ -161,7 +164,7 @@ async function runSearch() {
 
   try {
     const journals = selectedJournals(params);
-    const resolvedJournals = await ensureSourceIds(journals);
+    const resolvedJournals = await ensureSourceIds(journals, params.apiKey);
     const sourceIds = unique(resolvedJournals.map((journal) => journal.sourceId).filter(Boolean));
     const skipped = journals.length - resolvedJournals.length;
 
@@ -188,7 +191,6 @@ async function runSearch() {
         sort: params.sort,
         page: requestPage,
         perPage: requestPerPage,
-        mailto: params.mailto,
         articleOnly: true
       })
     ];
@@ -204,14 +206,13 @@ async function runSearch() {
           sort: params.sort,
           page: requestPage,
           perPage: requestPerPage,
-          mailto: params.mailto,
           articleOnly: true,
           keywordIds
         })
       );
     }
 
-    const datasets = await Promise.all(requests.map(fetchWorks));
+    const datasets = await Promise.all(requests.map((url) => fetchWorks(url, params.apiKey)));
     const rawWorks = dedupeWorks(datasets.flatMap((data) => data.results || []));
     const rankedWorks = sortWorksForQuery(rawWorks.map(normalizeWork), params.query, params.sort);
     const displayWorks = useRankedCandidatePool
@@ -254,7 +255,7 @@ function readSearchParams() {
     sort: elements.sort.value,
     perPage: Number(elements.perPage.value),
     includeHistorical: elements.includeHistorical.checked,
-    mailto: elements.mailto.value.trim()
+    apiKey: elements.apiKey.value.trim()
   };
 }
 
@@ -293,7 +294,7 @@ function selectedJournals(params) {
   return journals.filter((journal) => journal.id === params.journalId);
 }
 
-async function ensureSourceIds(journals) {
+async function ensureSourceIds(journals, apiKey = "") {
   const known = [];
   const toResolve = [];
 
@@ -310,7 +311,7 @@ async function ensureSourceIds(journals) {
   updateSourceCoverage(known.length, journals.length);
 
   const resolved = await mapLimit(toResolve, SOURCE_CONCURRENCY, async (journal) => {
-    const sourceId = await resolveJournalSourceId(journal);
+    const sourceId = await resolveJournalSourceId(journal, (url) => fetchOpenAlex(url, apiKey));
     if (sourceId) {
       state.sourceCache[journal.id] = sourceId;
       writeSourceCache(state.sourceCache);
@@ -455,12 +456,47 @@ function orderByPublicationDateDesc(works) {
   );
 }
 
-async function fetchWorks(url) {
-  const response = await fetch(url);
+async function fetchWorks(url, apiKey = "") {
+  const cacheKey = url;
+  const cached = worksCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  const response = await fetchOpenAlex(url, apiKey);
   if (!response.ok) {
     throw new Error(`OpenAlex returned HTTP ${response.status}.`);
   }
-  return response.json();
+  const data = await response.json();
+  worksCache.set(cacheKey, {
+    data,
+    expiresAt: Date.now() + WORKS_CACHE_TTL_MS
+  });
+  return data;
+}
+
+async function fetchOpenAlex(url, apiKey = "", attempt = 0) {
+  const response = await fetch(urlWithApiKey(url, apiKey));
+
+  if (response.status === 429 && attempt < OPENALEX_RETRY_DELAYS_MS.length) {
+    await delay(retryDelayMs(response, attempt));
+    return fetchOpenAlex(url, apiKey, attempt + 1);
+  }
+
+  if (response.status === 429) {
+    throw new Error(
+      "OpenAlex is rate-limiting requests right now. Wait a minute and search again, or enter a free OpenAlex API key for heavier use."
+    );
+  }
+
+  return response;
+}
+
+function urlWithApiKey(url, apiKey = "") {
+  if (!apiKey.trim()) return url;
+  const requestUrl = new URL(url);
+  requestUrl.searchParams.set("api_key", apiKey.trim());
+  return requestUrl.toString();
 }
 
 function dedupeWorks(works) {
@@ -483,6 +519,20 @@ function estimateTotal(datasets, fallback) {
 
 function dateValue(publicationDate, year) {
   return Date.parse(publicationDate || `${year || 0}-01-01`) || 0;
+}
+
+function retryDelayMs(response, attempt) {
+  const retryAfterSeconds = Number(response.headers.get("Retry-After"));
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return retryAfterSeconds * 1000;
+  }
+  return OPENALEX_RETRY_DELAYS_MS[attempt];
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function setLoading(isLoading) {
